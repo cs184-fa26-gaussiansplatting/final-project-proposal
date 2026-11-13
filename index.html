@@ -38,8 +38,10 @@
 	</head>
 	<body>
 		<div class="container">
-		<h1>Project Title (TBC)</h1>
-		<div style="text-align: center;">Team: Team Member 1 (CS184), Team Member 2 (CS184), Team Member 3 (CS184), Team Member 4 (CS184)</div>
+		<h1>Converting 3D Meshes to 3D Gaussian Splats</h1>
+		<div style="text-align: center;">
+			<h4>Team: Travis Le (CS184), Andrew Kim (CS184), Bharagth Ravindhran (CS184), Emma Yang (CS184)</h4>
+		</div>
 
 		<br>
 
@@ -51,78 +53,162 @@
 
 		<h2>Summary</h2>
 		<p>
-			We will build an end-to-end pipeline that will turn a handful of casually captured, unposed 2D photos into a real-time 3D Gaussian splat of a scene.
-			The original 3D Gaussian Splatting method [1] has four stages: structure-from-motion, conversion to Gaussians, training, and differentiable rasterization. We will keep this framing but replace the calibrated multi-view capture requirement with a pose-free pointmap front-end. The Gaussian representation will then be initialized and trained with our own optimizer, densification, and pruning logic.
-			The final deliverable will be a WebGL viewer demo plus quantitative novel-view-synthesis results measured on scenes we will capture ourselves.
+			We will be building a pipeline that will convert a 3D model into a 3D Gaussian splat 
+			that can be viewed with lighting and textures in real-time. The main goal will be to 
+			take in an .obj file containing a 3D model and output a .ply file containing the 3D 
+			Gaussian splats which can be viewed in an external website such as <a href="https://superspl.at/">SuperSplat</a>.
 		</p>
 
 		<h2>Problem Description</h2>
+
+		<h3>What is 3D Gaussian Splatting?</h3>
+
 		<p>
-			3D Gaussian Splatting [1] renders photorealistic scenes in real time, but the standard pipeline assumes dense, <i>posed</i> multi-view input, typically 50&ndash;300 photos together with camera intrinsics and extrinsics from COLMAP's structure-from-motion. Few casual users can meet that requirement. Most people have a handful of phone snapshots rather than a calibrated capture rig.
+			3D Gaussian Splatting (a.k.a. 3DGS) is a rasterization technique typically used to turn small 
+			samples of images into photorealistic scenes that can be viewed and rendered real-time. 
+			The technique replaces triangles used in rasterization with Gaussian splats. These splats are 
+			in the shape of ellipses that can be stretched and scaled to form the shape of the scene. They 
+			store information such as position, covariance (stretch/scale matrix), color, and alpha (transparency). 
+			With millions of splats, they can form photorealistic scenes that are easy to render to the point where 
+			they can easily be viewed in a browser at websites such as <a href="https://superspl.at/">SuperSplat</a>.
 		</p>
+
 		<p>
-			The challenge is twofold. First, structure-from-motion degrades badly on sparse, unposed input because few feature matches yield unreliable poses, and without poses there is nothing to optimize against. Second, 3DGS training itself degenerates when only a few views are available, since the densification schedule and photometric loss overfit the training views and hallucinate geometry in unobserved regions.
+			The basics of the 3DGS pipeline includes:
+
+			<ol>
+				<li>Structure from Motion (SfM)
+					<ul>
+						<li>From a set of 2D images, create a 3D point cloud estimating the scene</li>
+					</ul>
+				</li>
+				<li>Converting to Gaussians
+					<ul>
+						<li>Convert each point in the point cloud to a roughly estimated Gaussian splat (gsplat)</li>
+					</ul>
+				</li>
+				<li>Training
+					<ul>
+						<li>Rasterize and render the gsplats to obtain an image</li>
+						<li>Compare the image to the ground truth image (from the original set of images)</li>
+						<li>Use Stochastic Gradient Descent to minimize the difference (loss) by adjusting each gsplat's parameters</li>
+					</ul>
+				</li>
+			</ol>
+
+			Other techniques such as Differentiable Gaussian Rasterization and Adaptive Density Control (densification) are also used to optimize the pipeline.
 		</p>
+
+		<h3>The Problem</h3>
+
 		<p>
-			Our general approach will follow recent pose-free sparse-view work such as InstantSplat [5], NoPoSplat [8], and MV-DUSt3R+ [9]. We will use a pretrained pointmap model, DUSt3R [3] or MASt3R [4], as the SfM-equivalent front-end, in the same role COLMAP played in the original 3DGS paper. This model regresses dense pixel-aligned 3D pointmaps and camera parameters directly from unposed images. We will then convert the pointmap into per-pixel Gaussian initializations and train the representation with our own 3DGS-style optimizer on top of the differentiable rasterizer.
+			3D Gaussian Splatting is mainly used for converting scenes in real-life, however it can 
+			also be used for already existing 3D models and more generally any 3D scene that we can 
+			take snapshots of. The main purpose for taking an existing 3D polygon model and converting 
+			it with 3DGS is to create a visualization of the model that does not require rendering it entirely. 
+			With 3DGS, you could view the model at all angles with proper lighting, shading, and texturing 
+			included as opposed to seeing the 3D model pre-render. An example of this can be seen 
+			<a href="https://superspl.at/scene/659dc12e">here</a>.
+		</p>
+
+		<p>
+			Implementing this will be tricky given that we are essentially reworking the first part 
+			of the 3DGS pipeline (Structure from Motion). Instead of taking high quality pictures and 
+			using those, we will instead need to produce reference images of the 3D object by rendering 
+			it at certain angles. 
+		</p>
+
+		<p>
+			The initial idea we have in mind for achieving this is by setting up (or simulating) a 
+			multicamera setup that captures the model from many angles (think of a sphere of cameras 
+			surrounding the object) that will allow us to render out these reference images. Of course, 
+			rendering too many reference images would defeat the whole purpose of avoiding a lot of rendering 
+			as well, so we need to find an optimized way of achieving this.
 		</p>
 
 		<h2>Goals and Deliverables</h2>
 
-		<h3>Questions we plan to answer</h3>
+		<h3>Questions We Plan To Answer</h3>
 		<ul>
-			<li>How few casually captured, unposed photos do we need before the splat becomes unusable? We will sweep 2, 4, and 8 input views on the same scene.</li>
-			<li>Does a dense pointmap initialization (DUSt3R [3]/MASt3R [4]) beat sparse SfM (COLMAP) initialization when both feed the same 3DGS optimizer?</li>
-			<li>Where does the pose-free pipeline fail on scenes like textureless walls, reflective surfaces, or large environments? Can depth regularization rescue the worst cases?</li>
+			<li>How do we find the optimal coverage of reference images that best represents the 3D object while using minimal amounts of rendering?</li>
+			<li>Given that we are already working with a 3D representation of an object, does there exist any useful information that can help optimize the conversion to gsplats?</li>
+			<li>How do we ensure that properties such as textures, lighting, and shading are all preserved in the final 3DGS result?</li>
 		</ul>
 
-		<h3>Must deliver</h3>
+		<h3>Measurements</h3>
 		<ul>
-			<li>An end-to-end pipeline that will take 2&ndash;8 unposed photos of a scene and produce a real-time 3D Gaussian splat, which we will demonstrate on 3&ndash;5 test scenes we will capture ourselves.</li>
-			<li>Our graphics contribution will be the Gaussian initialization from pointmaps, the training loop over position, covariance, color, and opacity, and the densification and pruning schedule. The differentiable CUDA rasterizer will come from <code>gsplat</code>, and we will state this division of labor explicitly rather than burying it.</li>
-			<li>We will report quantitative results, PSNR, SSIM, and LPIPS on held-out views of each scene, and will present them as plots across the view-count sweep.</li>
-			<li>We will build a WebGL viewer so the final splats can be explored live in the browser during our presentation demo, and will include still renders of every scene on this page.</li>
+			<li>We will be measuring the time it takes for our program to take a 3D object file (.obj) and output the 3DGS file (.ply).</li>
+			<li>We will also be comparing the result of the .ply file to renders of the 3D object to check for accuracy.</li>
 		</ul>
 
-		<h3>Hope to deliver</h3>
+		<h3><i>Must</i> Deliver</h3>
 		<ul>
-			<li>We hope to support single-image input by generating pseudo-views with a diffusion model before splatting.</li>
-			<li>We hope to deploy a web demo where TAs and classmates can upload their own photos and get back a splat.</li>
-			<li>We hope to add a compression/compactness analysis of the trained splat (Gaussian count vs. quality trade-off).</li>
+			<li>A pipeline that will take in a 3D object file (.obj) and produce a 3D Gaussian splat (.ply) in an optimal amount of time.</li>
+		</ul>
+
+		<h3><i>Hope</i> To Deliver</h3>
+		<ul>
+			<li>Included optimizations such as Adaptive Density Control (densification) to further speed up the pipeline.</li>
+			<li>Adaptive camera placement for irregular / large 3D models</li>
+			<li>Support for changing the location or type of lights used</li>
 		</ul>
 
 		<h2>Schedule</h2>
-		<table>
+		<table border="3">
 			<tr>
 				<th>Week</th>
 				<th>Tasks</th>
 			</tr>
 			<tr>
 				<td>Week 1<br>(Nov 13&ndash;19)</td>
-				<td>Set up environment (PyTorch, <code>gsplat</code>, DUSt3R/MASt3R inference); capture and select 3&ndash;5 test scenes; run pointmap front-end and get a naive pointmap&rarr;Gaussian render working. <b>Milestone report, video, and slides due Nov 22.</b></td>
+				<td style="text-align:left;">
+					<ul>
+						<li>Set up environment (C++, PyTorch, <code>gsplat</code>)</li>
+						<li>Select 3&ndash;5 test .obj models</li>
+						<li>Get a naive 3D model&rarr;Gaussian splat working using a few cameras</li>
+						<li><b>Milestone report, video, and slides due Nov 22.</b></li>	
+					</ul>
+				</td>
 			</tr>
 			<tr>
 				<td>Week 2<br>(Nov 20&ndash;26)</td>
-				<td>Implement our own training loop: Gaussian parameter SGD, densification and pruning schedule, depth regularization for sparse views; build the metrics pipeline (PSNR/SSIM/LPIPS) and get first numbers on one scene.</td>
+				<td style="text-align:left;">
+					<ul>
+						<li>Implement our own training loop: Gaussian parameter SGD, depth regularization for sparse views, densification (maybe)</li>
+						<li>Expand on camera setup and rendering, look for possible optimizations</li>
+					</ul>
+				</td>
 			</tr>
 			<tr>
 				<td>Week 3<br>(Nov 27&ndash;Dec 3)</td>
-				<td>Run the view-count sweep (2/4/8) and initialization ablation (pointmap vs. COLMAP) across all scenes; integrate the WebGL viewer; analyze and fix the worst failure cases. <b>Freeze results Dec 3.</b></td>
+				<td style="text-align:left;">
+					<ul>
+						<li>Continue optimizing the conversion between 3D model and pointmap</li>
+						<li><b>Freeze results Dec 3 in preparation for final presentation.</b></li>
+					</ul>
+				</td>
 			</tr>
 			<tr>
 				<td>Week 4<br>(Dec 4&ndash;8)</td>
-				<td>Write final report webpage, record the 1&ndash;2 minute video, build presentation slides, rehearse the 5-minute presentation with live viewer demo. <b>Final deliverables due Dec 6; presentations Dec 7&ndash;8.</b></td>
+				<td style="text-align:left;">
+					<ul>
+						<li>Write final report webpage, record the 1&ndash;2 minute video, build presentation slides, rehearse the 5-minute presentation with live viewer demo</li>
+						<li><b>Final deliverables due Dec 6; presentations Dec 7&ndash;8.</b></li>
+					</ul>
+				</td>
 			</tr>
 		</table>
 
 		<h2>Resources</h2>
 
-		<h3>Papers and articles</h3>
+		<h3>Papers and Articles</h3>
+
 		<p>
-			References are formatted in IEEE style. The base rendering method is [1], and the four-stage pipeline framing follows the blog overview in [2]. The pointmap front-end will be [3] or [4], InstantSplat [5] is the closest prior work for our initialization strategy, and [6]&ndash;[9] are related sparse-view feed-forward methods we compare against conceptually.
+			References are formatted in IEEE style.
 		</p>
+
 		<ul>
-			<li>[1] B. Kerbl, G. Kopanas, T. Leimk&uuml;hler, and G. Drettakis, "<a href="https://arxiv.org/abs/2308.04079">3D Gaussian Splatting for Real-Time Radiance Field Rendering</a>," <i>ACM Trans. Graph.</i>, vol. 42, no. 4, Art. no. 139, Jul. 2023.</li>
+			<li>[1] B. Kerbl, G. Kopanas, T. Leimk&uuml;hler, and G. Drettakis, "<a href="https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/">3D Gaussian Splatting for Real-Time Radiance Field Rendering</a>," <i>ACM Trans. Graph.</i>, vol. 42, no. 4, Art. no. 139, Jul. 2023.</li>
 			<li>[2] D. Ebert et al., "Introduction to 3D Gaussian Splatting," Hugging Face Blog, Sep. 18, 2023. [Online]. Available: <a href="https://huggingface.co/blog/gaussian-splatting">https://huggingface.co/blog/gaussian-splatting</a></li>
 			<li>[3] S. Wang, V. Leroy, Y. Cabon, B. Chidlovskii, and J. Revaud, "<a href="https://arxiv.org/abs/2312.14132">DUSt3R: Geometric 3D Vision Made Easy</a>," in <i>Proc. IEEE/CVF Conf. Comput. Vis. Pattern Recognit. (CVPR)</i>, 2024, pp. 20697&ndash;20709.</li>
 			<li>[4] V. Leroy, Y. Cabon, and J. Revaud, "<a href="https://arxiv.org/abs/2406.09756">Grounding Image Matching in 3D with MASt3R</a>," in <i>Proc. Eur. Conf. Comput. Vis. (ECCV)</i>, 2024.</li>
@@ -133,15 +219,14 @@
 			<li>[9] Z. Tang et al., "<a href="https://arxiv.org/abs/2412.06974">MV-DUSt3R+: Single-Stage Scene Reconstruction from Sparse Views in 2 Seconds</a>," in <i>Proc. IEEE/CVF Conf. Comput. Vis. Pattern Recognit. (CVPR)</i>, 2025, pp. 5283&ndash;5293.</li>
 		</ul>
 
-		<h3>Software and starting point</h3>
+		<h3>Software and Starting Point</h3>
 		<ul>
 			<li>We will use <a href="https://github.com/nerfstudio-project/gsplat"><code>gsplat</code></a> only as the differentiable CUDA rasterization engine. Our optimizer, densification logic, and metrics will be written by us.</li>
-			<li>We will use pretrained <a href="https://github.com/naver/dust3r">DUSt3R</a>/<a href="https://github.com/naver/mast3r">MASt3R</a> checkpoints for the front-end, playing the same role COLMAP plays in the original 3DGS pipeline.</li>
-			<li>We will adapt a WebGL splat viewer (e.g. <a href="https://github.com/antimatter15/splat">antimatter15/splat</a> style) for the in-browser demo.</li>
-			<li>We will start from these libraries rather than from existing project code. Everything between the pointmaps and the rendered splats will be written by us.</li>
+			<li>We will start from libraries rather than from existing project code. Everything between the pointmaps and the splats will be written by us.</li>
+			<li>We will be using <a href="https://superspl.at/">SuperSplat</a> to view our .ply files.</li>
 		</ul>
 
-		<h3>Computing platform</h3>
+		<h3>Computing Platform</h3>
 		<ul>
 			<li>Team GPU access is not yet confirmed. Our plan is to use a local CUDA GPU if available and to fall back to Colab or a rented cloud GPU (AutoDL) otherwise. We will keep scenes small so training fits within a single modest GPU's budget.</li>
 		</ul>
